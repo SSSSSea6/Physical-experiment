@@ -1,0 +1,48 @@
+name = "lab-api"
+main = "apps/worker/src/index.ts"
+compatibility_date = "2025-12-18"
+
+[vars]
+# Comma-separated allowlist. Example:
+# FRONTEND_ORIGIN = "https://lab.nuaaguide.online,http://localhost:5173"
+FRONTEND_ORIGIN = "http://localhost:5173"
+
+# Optional: set cookie domain to share across subdomains, e.g. ".nuaaguide.online"
+# COOKIE_DOMAIN = ".nuaaguide.online"
+
+# Optional: protect /v1/cron/cleanup for manual triggering
+# CRON_SECRET = "change-me"
+
+# Optional admin secret for /v1/auth/register
+# ADMIN_SECRET = "change-me"
+
+# Secrets (set via `wrangler secret put`, don't commit them):
+# - TURNSTILE_SECRET
+# - GEMINI_API_KEY
+
+[[d1_databases]]
+binding = "DB"
+database_name = "lab_db"
+database_id = "59a4e2b1-700d-4358-a48d-a5e0502af37e"
+migrations_dir = "apps/worker/migrations"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "f2cfaf4be3344a709c76c316e0ce3ff2"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "lab-uploads"
+
+[durable_objects]
+bindings = [
+  { name = "LEDGER", class_name = "LedgerDO" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["LedgerDO"]
+
+[triggers]
+crons = ["0 4 * * *"]
+

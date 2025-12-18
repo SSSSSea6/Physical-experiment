@@ -1,0 +1,14 @@
+{
+  "name": "lab-nuaaguide-online",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:worker": "wrangler dev",
+    "dev:frontend": "npm --workspace apps/frontend run dev",
+    "typecheck": "npm --workspace apps/worker run typecheck && npm --workspace apps/frontend run typecheck",
+    "build": "npm --workspace apps/worker run build && npm --workspace apps/frontend run build"
+  }
+}
+

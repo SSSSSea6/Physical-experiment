@@ -1,0 +1,30 @@
+{
+  "exp_id": "hall",
+  "name": "Hall 效应实验",
+  "version": 1,
+  "meta_fields": [
+    { "id": "sample_id", "name": "样品编号", "type": "string" },
+    { "id": "I_mA", "name": "电流 I", "unit": "mA", "type": "number" }
+  ],
+  "tables": [
+    {
+      "id": "uh_vs_b",
+      "title": "固定电流，测 Hall 电压 U_H - 磁场 B",
+      "rows": 6,
+      "columns": [
+        { "id": "B_mT", "name": "B", "unit": "mT", "type": "number" },
+        { "id": "U_H_mV", "name": "U_H", "unit": "mV", "type": "number" }
+      ]
+    },
+    {
+      "id": "uh_vs_i",
+      "title": "固定磁场，测 U_H - 电流 I",
+      "rows": 6,
+      "columns": [
+        { "id": "I_mA", "name": "I", "unit": "mA", "type": "number" },
+        { "id": "U_H_mV", "name": "U_H", "unit": "mV", "type": "number" }
+      ]
+    }
+  ]
+}
+
