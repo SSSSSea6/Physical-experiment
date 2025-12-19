@@ -5,7 +5,7 @@ compatibility_date = "2025-12-18"
 [vars]
 # Comma-separated allowlist. Example:
 # FRONTEND_ORIGIN = "https://lab.nuaaguide.online,http://localhost:5173"
-FRONTEND_ORIGIN = "http://localhost:5173"
+FRONTEND_ORIGIN = "https://lab.nuaaguide.online,http://localhost:5173"
 
 # Optional: set cookie domain to share across subdomains, e.g. ".nuaaguide.online"
 # COOKIE_DOMAIN = ".nuaaguide.online"
@@ -45,4 +45,3 @@ new_classes = ["LedgerDO"]
 
 [triggers]
 crons = ["0 4 * * *"]
-
