@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import Turnstile from "../components/Turnstile";
 import { ApiError, history, logout, me, redeem } from "../api";
 import { experiments } from "../experiments";
 import type { HistoryItem, Me } from "../types";
@@ -10,8 +9,6 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState<Me | null>(null);
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [code, setCode] = useState("");
-  const [token, setToken] = useState("");
-  const [reset, setReset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,13 +63,6 @@ export default function DashboardPage() {
               兑换码
               <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="16~20 位" />
             </label>
-            <Turnstile
-              onToken={(t) => {
-                setToken(t);
-                setError(null);
-              }}
-              resetSignal={reset}
-            />
             {error ? <div className="notice">{error}</div> : null}
             <button
               disabled={busy}
@@ -81,22 +71,14 @@ export default function DashboardPage() {
                   setError("请输入兑换码");
                   return;
                 }
-                if (!token) {
-                  setError("请先完成人机验证");
-                  return;
-                }
                 setBusy(true);
                 try {
-                  const r = await redeem({ code: code.trim(), turnstile_token: token });
+                  const r = await redeem({ code: code.trim() });
                   setCode("");
-                  setToken("");
-                  setReset((x) => x + 1);
                   setProfile((p) => (p ? { ...p, balance: r.balance } : p));
                 } catch (e) {
                   if (e instanceof ApiError) setError(`${e.message}（${e.code}）`);
                   else setError("兑换失败");
-                  setToken("");
-                  setReset((x) => x + 1);
                 } finally {
                   setBusy(false);
                 }

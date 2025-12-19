@@ -40,7 +40,7 @@ export async function me(): Promise<Me> {
   return apiFetchJson("/v1/me", { method: "GET" });
 }
 
-export async function login(params: { student_id: string; password: string; turnstile_token: string }): Promise<Me> {
+export async function login(params: { student_id: string; password: string }): Promise<Me> {
   return apiFetchJson("/v1/auth/login", { method: "POST", body: JSON.stringify(params) });
 }
 
@@ -48,7 +48,7 @@ export async function logout(): Promise<void> {
   await apiFetchJson("/v1/auth/logout", { method: "POST", body: JSON.stringify({}) });
 }
 
-export async function redeem(params: { code: string; turnstile_token: string }): Promise<{ balance: number; amount: number }> {
+export async function redeem(params: { code: string }): Promise<{ balance: number; amount: number }> {
   return apiFetchJson("/v1/redeem", { method: "POST", body: JSON.stringify(params) });
 }
 
@@ -82,8 +82,6 @@ export async function putUpload(uploadUrl: string, blob: Blob): Promise<void> {
 export async function extract(params: {
   exp_id: string;
   image_key: string;
-  turnstile_token: string;
 }): Promise<{ artifact_id: string; payload: any; balance: number }> {
   return apiFetchJson("/v1/extract", { method: "POST", body: JSON.stringify(params) });
 }
-

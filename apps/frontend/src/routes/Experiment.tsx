@@ -3,7 +3,6 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import type { ExpPayload, Me } from "../types";
 import { getExperiment, makeBlankPayload, normalizePayload } from "../experiments";
 import { ApiError, extract, getArtifact, getUploadUrl, me, putUpload } from "../api";
-import Turnstile from "../components/Turnstile";
 import CropperModal from "../components/CropperModal";
 import EditableTable from "../components/EditableTable";
 import PlotArea from "../components/PlotArea";
@@ -20,8 +19,6 @@ export default function ExperimentPage() {
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [cropOpen, setCropOpen] = useState(false);
   const [cropped, setCropped] = useState<Blob | null>(null);
-  const [extractToken, setExtractToken] = useState("");
-  const [reset, setReset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [artifact, setArtifact] = useState<string | null>(artifactId);
@@ -104,11 +101,11 @@ export default function ExperimentPage() {
             建议先裁剪到表格区域并压缩，以节省 token 与提升识别准确率
           </div>
 
-          <div className="grid" style={{ marginTop: 12 }}>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) => {
+            <div className="grid" style={{ marginTop: 12 }}>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (!f) return;
                 const url = URL.createObjectURL(f);
@@ -124,44 +121,23 @@ export default function ExperimentPage() {
               <div className="notice">还未裁剪图片</div>
             )}
 
-            <div>
-              <div className="muted" style={{ fontSize: 13, marginBottom: 8 }}>
-                识别前需要 Turnstile；每次识别消耗 1 次
-              </div>
-              <Turnstile
-                onToken={(t) => {
-                  setExtractToken(t);
-                  setError(null);
-                }}
-                resetSignal={reset}
-              />
-            </div>
-
             <button
               disabled={busy || !cropped}
               onClick={async () => {
                 setError(null);
                 if (!cropped) return;
-                if (!extractToken) {
-                  setError("请先完成人机验证");
-                  return;
-                }
                 setBusy(true);
                 try {
                   const up = await getUploadUrl({ exp_id: def.id, content_type: cropped.type || "image/jpeg" });
                   await putUpload(up.upload_url, cropped);
-                  const r = await extract({ exp_id: def.id, image_key: up.image_key, turnstile_token: extractToken });
+                  const r = await extract({ exp_id: def.id, image_key: up.image_key });
                   setPayload(normalizePayload(def.schema, r.payload));
                   setProfile((p) => (p ? { ...p, balance: r.balance } : p));
                   setArtifact(r.artifact_id);
                   setPlotOn(false);
-                  setExtractToken("");
-                  setReset((x) => x + 1);
                 } catch (e) {
                   if (e instanceof ApiError) setError(`${e.message}（${e.code}）`);
                   else setError("识别失败");
-                  setExtractToken("");
-                  setReset((x) => x + 1);
                 } finally {
                   setBusy(false);
                 }

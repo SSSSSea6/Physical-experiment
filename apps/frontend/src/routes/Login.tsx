@@ -1,14 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import Turnstile from "../components/Turnstile";
 import { ApiError, login } from "../api";
 
 export default function LoginPage() {
   const nav = useNavigate();
   const [studentId, setStudentId] = useState("");
   const [password, setPassword] = useState("");
-  const [token, setToken] = useState("");
-  const [reset, setReset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,14 +37,6 @@ export default function LoginPage() {
             />
           </label>
 
-          <Turnstile
-            onToken={(t) => {
-              setToken(t);
-              setError(null);
-            }}
-            resetSignal={reset}
-          />
-
           {error ? <div className="notice">{error}</div> : null}
 
           <button
@@ -58,19 +47,13 @@ export default function LoginPage() {
                 setError("请输入学号与密码");
                 return;
               }
-              if (!token) {
-                setError("请先完成人机验证");
-                return;
-              }
               setBusy(true);
               try {
-                await login({ student_id: studentId.trim(), password, turnstile_token: token });
+                await login({ student_id: studentId.trim(), password });
                 nav("/dashboard", { replace: true });
               } catch (e) {
                 if (e instanceof ApiError) setError(`${e.message}（${e.code}）`);
                 else setError("登录失败");
-                setToken("");
-                setReset((x) => x + 1);
               } finally {
                 setBusy(false);
               }

@@ -7,7 +7,6 @@ import type { Env } from "./env";
 import { LedgerDO } from "./ledger-do";
 import hallSchema from "../../../experiments/hall/schema.json";
 import { hallPrompt } from "../../../experiments/hall/prompt";
-import { verifyTurnstile } from "./lib/turnstile";
 import { base64FromArrayBuffer, base64UrlFromArrayBuffer } from "./lib/base64";
 import { callGeminiJson } from "./lib/gemini";
 import { checkRateLimit } from "./lib/rateLimit";
@@ -239,15 +238,11 @@ app.post("/v1/auth/login", async (c) => {
     const parsed = z
       .object({
         student_id: z.string().min(1).max(64),
-        password: z.string().min(1).max(128),
-        turnstile_token: z.string().min(1)
+        password: z.string().min(1).max(128)
       })
       .parse(body);
 
     const ip = getIp(c);
-    const okTs = await verifyTurnstile(c.env.TURNSTILE_SECRET, parsed.turnstile_token, ip);
-    if (!okTs) throw new ApiError(400, "turnstile_failed", "人机验证失败");
-
     const rlKey = `rl:login:${parsed.student_id}:${ip ?? "noip"}:${Math.floor(Date.now() / 60_000)}`;
     const allowed = await checkRateLimit(c.env.KV, rlKey, 5, 120);
     if (!allowed) throw new ApiError(429, "rate_limited", "请求过于频繁，请稍后再试");
@@ -354,15 +349,11 @@ app.post("/v1/redeem", requireAuth, async (c) => {
     const body = await c.req.json();
     const parsed = z
       .object({
-        code: z.string().min(6).max(64),
-        turnstile_token: z.string().min(1)
+        code: z.string().min(6).max(64)
       })
       .parse(body);
 
     const ip = getIp(c);
-    const okTs = await verifyTurnstile(c.env.TURNSTILE_SECRET, parsed.turnstile_token, ip);
-    if (!okTs) throw new ApiError(400, "turnstile_failed", "人机验证失败");
-
     const rlKey = `rl:redeem:${studentId}:${ip ?? "noip"}:${Math.floor(Date.now() / 60_000)}`;
     const allowed = await checkRateLimit(c.env.KV, rlKey, 5, 120);
     if (!allowed) throw new ApiError(429, "rate_limited", "请求过于频繁，请稍后再试");
@@ -444,15 +435,11 @@ app.post("/v1/extract", requireAuth, async (c) => {
     const parsed = z
       .object({
         exp_id: z.string().min(1),
-        image_key: z.string().min(1),
-        turnstile_token: z.string().min(1)
+        image_key: z.string().min(1)
       })
       .parse(body);
 
     const ip = getIp(c);
-    const okTs = await verifyTurnstile(c.env.TURNSTILE_SECRET, parsed.turnstile_token, ip);
-    if (!okTs) throw new ApiError(400, "turnstile_failed", "人机验证失败");
-
     const rlKey = `rl:extract:${studentId}:${ip ?? "noip"}:${Math.floor(Date.now() / 60_000)}`;
     const allowed = await checkRateLimit(c.env.KV, rlKey, 5, 120);
     if (!allowed) throw new ApiError(429, "rate_limited", "请求过于频繁，请稍后再试");
