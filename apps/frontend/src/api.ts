@@ -44,6 +44,27 @@ export async function login(params: { student_id: string; password: string }): P
   return apiFetchJson("/v1/auth/login", { method: "POST", body: JSON.stringify(params) });
 }
 
+export async function registerWithPassword(params: {
+  student_id: string;
+  password: string;
+}): Promise<{ student_id: string }> {
+  return apiFetchJson("/v1/auth/register", {
+    method: "POST",
+    body: JSON.stringify(params)
+  });
+}
+
+export async function changePassword(params: {
+  student_id: string;
+  old_password: string;
+  new_password: string;
+}): Promise<{ student_id: string }> {
+  return apiFetchJson("/v1/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify(params)
+  });
+}
+
 export async function logout(): Promise<void> {
   await apiFetchJson("/v1/auth/logout", { method: "POST", body: JSON.stringify({}) });
 }

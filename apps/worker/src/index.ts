@@ -1,3 +1,4 @@
+import "./lib/process-shim";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -12,6 +13,9 @@ import { callGeminiJson } from "./lib/gemini";
 import { checkRateLimit } from "./lib/rateLimit";
 import { ApiError, asApiError } from "./lib/errors";
 
+// Some bundled libs (NodeRSA from totoro) assume Node's process.env exists.
+// Provide a tiny shim to avoid "process is not defined" in Workers runtime.
+(globalThis as any).process = (globalThis as any).process ?? { env: {} };
 type Variables = { studentId: string };
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -69,9 +73,27 @@ async function studentIdFromSession(c: any): Promise<string | null> {
   return studentId ?? null;
 }
 
+async function issueSession(c: any, studentId: string): Promise<string> {
+  const sessionBytes = new Uint8Array(32);
+  crypto.getRandomValues(sessionBytes);
+  const sessionId = base64UrlFromArrayBuffer(sessionBytes.buffer);
+
+  await c.env.KV.put(`session:${sessionId}`, studentId, { expirationTtl: 24 * 60 * 60 });
+
+  setCookie(c, "lab_session", sessionId, {
+    httpOnly: true,
+    secure: cookieSecure(c),
+    sameSite: "Lax",
+    path: "/",
+    domain: c.env.COOKIE_DOMAIN
+  });
+
+  return sessionId;
+}
+
 async function requireAuth(c: any, next: any) {
   const studentId = await studentIdFromSession(c);
-  if (!studentId) return jsonError(c, new ApiError(401, "unauthorized", "未登录或会话已过期"));
+  if (!studentId) return jsonError(c, new ApiError(401, "unauthorized", "Unauthorized"));
   c.set("studentId", studentId);
   await next();
 }
@@ -197,36 +219,115 @@ app.use(
 
 app.get("/health", (c) => c.json({ ok: true }));
 
+app.post("/api/totoro/*", async (c) => {
+  const body = await c.req.text();
+  const headers = {
+    "Content-Type": "application/json; charset=utf-8",
+    Host: "app.xtotoro.com",
+    Connection: "keep-alive",
+    "Accept-Encoding": "gzip, deflate, br",
+    "User-Agent": "TotoroSchool/1.2.14 (iPhone; iOS 17.4.1; Scale/3.00)",
+    Cookie: c.req.header("cookie"),
+    Accept: "application/json"
+  };
+  const path = c.req.path.replace("/api/totoro/", "/app/");
+  return fetch(`https://app.xtotoro.com${path}`, {
+    method: "post",
+    headers: { ...(headers as HeadersInit) },
+    body
+  });
+});
+
 app.post("/v1/auth/register", async (c) => {
   try {
     const adminSecret = c.req.header("X-Admin-Secret");
-    if (!c.env.ADMIN_SECRET || adminSecret !== c.env.ADMIN_SECRET) {
-      throw new ApiError(403, "forbidden", "缺少管理员密钥");
+    const body = await c.req.json().catch(() => ({}));
+
+    if (adminSecret && c.env.ADMIN_SECRET && adminSecret === c.env.ADMIN_SECRET) {
+      const parsed = z
+        .object({
+          student_id: z.string().min(5).max(30),
+          password: z.string().min(6).max(20),
+          balance: z.number().int().min(0).max(1_000_000).optional()
+        })
+        .parse(body);
+
+      const existing = await c.env.DB.prepare("SELECT student_id FROM users WHERE student_id=?")
+        .bind(parsed.student_id)
+        .first();
+      if (existing) throw new ApiError(409, "user_exists", "user already exists");
+
+      const hash = bcrypt.hashSync(parsed.password, 10);
+      const now = nowIso();
+      await c.env.DB.prepare(
+        "INSERT INTO users(student_id, password_hash, balance, failed_login, locked_until, created_at, updated_at) VALUES(?,?,?,?,?,?,?)"
+      )
+        .bind(parsed.student_id, hash, parsed.balance ?? 0, 0, null, now, now)
+        .run();
+
+      await insertUsageLog(c.env, parsed.student_id, "register", 0, { via: "admin" });
+      return jsonOk(c, { ok: true, student_id: parsed.student_id });
     }
 
-    const body = await c.req.json();
     const parsed = z
       .object({
-        student_id: z.string().min(1).max(64),
-        password: z.string().min(6).max(128),
-        balance: z.number().int().min(0).max(1_000_000).optional()
+        student_id: z.string().min(5).max(30),
+        password: z.string().min(6).max(20)
       })
       .parse(body);
 
     const existing = await c.env.DB.prepare("SELECT student_id FROM users WHERE student_id=?")
       .bind(parsed.student_id)
       .first();
-    if (existing) throw new ApiError(409, "user_exists", "用户已存在");
+    if (existing) throw new ApiError(409, "user_exists", "user already exists");
 
     const hash = bcrypt.hashSync(parsed.password, 10);
     const now = nowIso();
     await c.env.DB.prepare(
       "INSERT INTO users(student_id, password_hash, balance, failed_login, locked_until, created_at, updated_at) VALUES(?,?,?,?,?,?,?)"
     )
-      .bind(parsed.student_id, hash, parsed.balance ?? 0, 0, null, now, now)
+      .bind(parsed.student_id, hash, 0, 0, null, now, now)
       .run();
 
-    return jsonOk(c, { ok: true });
+    await insertUsageLog(c.env, parsed.student_id, "register", 0, { via: "password" });
+
+    await issueSession(c, parsed.student_id);
+    return jsonOk(c, { student_id: parsed.student_id });
+  } catch (err) {
+    return jsonError(c, err);
+  }
+});
+
+
+app.post("/v1/auth/change-password", async (c) => {
+  try {
+    const body = await c.req.json();
+    const parsed = z
+      .object({
+        student_id: z.string().min(5).max(30),
+        old_password: z.string().min(6).max(20),
+        new_password: z.string().min(6).max(20)
+      })
+      .parse(body);
+
+    const existing = (await c.env.DB.prepare(
+      "SELECT student_id, password_hash FROM users WHERE student_id=?"
+    )
+      .bind(parsed.student_id)
+      .first()) as { student_id: string; password_hash: string } | null;
+    if (!existing) throw new ApiError(404, "not_found", "Not found");
+    const oldOk = bcrypt.compareSync(parsed.old_password, existing.password_hash);
+    if (!oldOk) throw new ApiError(401, "invalid_credentials", "Invalid credentials");
+
+    const hash = bcrypt.hashSync(parsed.new_password, 10);
+    await c.env.DB.prepare("UPDATE users SET password_hash=?, failed_login=0, locked_until=NULL, updated_at=? WHERE student_id=?")
+      .bind(hash, nowIso(), parsed.student_id)
+      .run();
+
+    await insertUsageLog(c.env, parsed.student_id, "change_password", 0, { via: "password" });
+    await issueSession(c, parsed.student_id);
+
+    return jsonOk(c, { student_id: parsed.student_id });
   } catch (err) {
     return jsonError(c, err);
   }
@@ -237,15 +338,15 @@ app.post("/v1/auth/login", async (c) => {
     const body = await c.req.json();
     const parsed = z
       .object({
-        student_id: z.string().min(1).max(64),
-        password: z.string().min(1).max(128)
+        student_id: z.string().min(5).max(30),
+        password: z.string().min(6).max(20)
       })
       .parse(body);
 
     const ip = getIp(c);
     const rlKey = `rl:login:${parsed.student_id}:${ip ?? "noip"}:${Math.floor(Date.now() / 60_000)}`;
     const allowed = await checkRateLimit(c.env.KV, rlKey, 5, 120);
-    if (!allowed) throw new ApiError(429, "rate_limited", "请求过于频繁，请稍后再试");
+    if (!allowed) throw new ApiError(429, "rate_limited", "Too many attempts, please retry later");
 
     const user = (await c.env.DB.prepare(
       "SELECT student_id, password_hash, balance, failed_login, locked_until FROM users WHERE student_id=?"
@@ -261,13 +362,13 @@ app.post("/v1/auth/login", async (c) => {
         }
       | null;
 
-    if (!user) throw new ApiError(401, "invalid_credentials", "学号或密码错误");
+        if (!user)       throw new ApiError(401, "invalid_credentials", "Invalid student_id or password");
 
     const now = new Date();
     if (user.locked_until) {
       const lockedUntilMs = Date.parse(user.locked_until);
       if (Number.isFinite(lockedUntilMs) && lockedUntilMs > now.getTime()) {
-        throw new ApiError(423, "locked", "密码错误次数过多，请稍后再试");
+        throw new ApiError(423, "locked", "Too many failed attempts, please wait and retry");
       }
     }
 
@@ -283,26 +384,14 @@ app.post("/v1/auth/login", async (c) => {
         .bind(failed, lockedUntil, nowIso(), parsed.student_id)
         .run();
 
-      throw new ApiError(401, "invalid_credentials", "学号或密码错误");
+            throw new ApiError(401, "invalid_credentials", "Invalid student_id or password");
     }
 
     await c.env.DB.prepare("UPDATE users SET failed_login=0, locked_until=NULL, updated_at=? WHERE student_id=?")
       .bind(nowIso(), parsed.student_id)
       .run();
 
-    const sessionBytes = new Uint8Array(32);
-    crypto.getRandomValues(sessionBytes);
-    const sessionId = base64UrlFromArrayBuffer(sessionBytes.buffer);
-
-    await c.env.KV.put(`session:${sessionId}`, parsed.student_id, { expirationTtl: 24 * 60 * 60 });
-
-    setCookie(c, "lab_session", sessionId, {
-      httpOnly: true,
-      secure: cookieSecure(c),
-      sameSite: "Lax",
-      path: "/",
-      domain: c.env.COOKIE_DOMAIN
-    });
+    await issueSession(c, parsed.student_id);
 
     await insertUsageLog(c.env, parsed.student_id, "login", 0, { ip });
 
@@ -336,7 +425,7 @@ app.get("/v1/me", requireAuth, async (c) => {
     const row = (await c.env.DB.prepare("SELECT balance FROM users WHERE student_id=?")
       .bind(studentId)
       .first()) as { balance: number } | null;
-    if (!row) throw new ApiError(404, "not_found", "用户不存在");
+    if (!row) throw new ApiError(404, "not_found", "Not found")
     return jsonOk(c, { student_id: studentId, balance: row.balance });
   } catch (err) {
     return jsonError(c, err);
@@ -356,7 +445,7 @@ app.post("/v1/redeem", requireAuth, async (c) => {
     const ip = getIp(c);
     const rlKey = `rl:redeem:${studentId}:${ip ?? "noip"}:${Math.floor(Date.now() / 60_000)}`;
     const allowed = await checkRateLimit(c.env.KV, rlKey, 5, 120);
-    if (!allowed) throw new ApiError(429, "rate_limited", "请求过于频繁，请稍后再试");
+    if (!allowed) throw new ApiError(429, "rate_limited", "Too many attempts, please retry later");
 
     const result = await ledgerRedeem(c.env, studentId, parsed.code, { ip });
     return jsonOk(c, result);
@@ -403,17 +492,17 @@ app.put("/v1/upload/:token", async (c) => {
   try {
     const token = c.req.param("token");
     const raw = await c.env.KV.get(`upload:${token}`);
-    if (!raw) throw new ApiError(400, "invalid_upload_token", "上传令牌无效或已过期");
+    if (!raw) throw new ApiError(400, "invalid_upload_token", "Upload token is invalid or expired")
 
     const meta = JSON.parse(raw) as { student_id: string; image_key: string; content_type: string };
     const studentId = await studentIdFromSession(c);
     if (!studentId || studentId !== meta.student_id) {
-      throw new ApiError(401, "unauthorized", "未登录或无权限");
+      throw new ApiError(401, "unauthorized", "Unauthorized")
     }
 
     const body = await c.req.arrayBuffer();
-    if (body.byteLength <= 0) throw new ApiError(400, "empty_body", "空文件");
-    if (body.byteLength > 5 * 1024 * 1024) throw new ApiError(413, "too_large", "图片过大（>5MB）");
+    if (body.byteLength <= 0) throw new ApiError(400, "empty_body", "Empty body")
+    if (body.byteLength > 5 * 1024 * 1024) throw new ApiError(413, "too_large", "Image too large (>5MB)")
 
     await c.env.BUCKET.put(meta.image_key, body, {
       httpMetadata: { contentType: c.req.header("Content-Type") ?? meta.content_type }
@@ -442,14 +531,14 @@ app.post("/v1/extract", requireAuth, async (c) => {
     const ip = getIp(c);
     const rlKey = `rl:extract:${studentId}:${ip ?? "noip"}:${Math.floor(Date.now() / 60_000)}`;
     const allowed = await checkRateLimit(c.env.KV, rlKey, 5, 120);
-    if (!allowed) throw new ApiError(429, "rate_limited", "请求过于频繁，请稍后再试");
+    if (!allowed) throw new ApiError(429, "rate_limited", "Too many attempts, please retry later");
 
     if (!parsed.image_key.startsWith(`u/${encodeURIComponent(studentId)}/`)) {
-      throw new ApiError(403, "forbidden", "image_key 不属于当前用户");
+      throw new ApiError(403, "forbidden", "Forbidden")
     }
 
     const exp = parsed.exp_id === "hall" ? { schema: hallSchema as any, prompt: hallPrompt } : null;
-    if (!exp) throw new ApiError(400, "unknown_exp", "未知实验模板");
+    if (!exp) throw new ApiError(400, "unknown_exp", "鏈煡瀹為獙妯℃澘");
 
     await doLedgerCall<{ balance: number }>(c.env, studentId, "/consume", {
       amount: 1,
@@ -458,12 +547,12 @@ app.post("/v1/extract", requireAuth, async (c) => {
     consumed = true;
 
     const obj = await c.env.BUCKET.get(parsed.image_key);
-    if (!obj) throw new ApiError(400, "image_not_found", "找不到图片（请重新上传）");
+    if (!obj) throw new ApiError(400, "image_not_found", "鎵句笉鍒板浘鐗囷紙璇烽噸鏂颁笂浼狅級");
     const buf = await obj.arrayBuffer();
     const mimeType = obj.httpMetadata?.contentType ?? "image/png";
 
     const skeleton = buildSkeleton(exp.schema);
-    const prompt = `${exp.prompt}\n\n请严格输出以下 JSON skeleton（缺失填 null，不要加字段）：\n${JSON.stringify(
+    const prompt = `${exp.prompt}\n\n璇蜂弗鏍艰緭鍑轰互涓?JSON skeleton锛堢己澶卞～ null锛屼笉瑕佸姞瀛楁锛夛細\n${JSON.stringify(
       skeleton,
       null,
       2
@@ -553,9 +642,9 @@ app.get("/v1/artifact/:id", requireAuth, async (c) => {
     )
       .bind(id, studentId)
       .first()) as any | null;
-    if (!row) throw new ApiError(404, "not_found", "历史记录不存在");
+    if (!row) throw new ApiError(404, "not_found", "Not found")
 
-    if (Date.parse(row.expires_at) <= Date.now()) throw new ApiError(410, "expired", "记录已过期");
+    if (Date.parse(row.expires_at) <= Date.now()) throw new ApiError(410, "expired", "Record expired")
 
     return jsonOk(c, {
       id: row.id,
@@ -578,11 +667,11 @@ app.get("/v1/artifact/:id/image", requireAuth, async (c) => {
     const row = (await c.env.DB.prepare("SELECT image_key, expires_at FROM artifacts WHERE id=? AND student_id=?")
       .bind(id, studentId)
       .first()) as { image_key: string | null; expires_at: string } | null;
-    if (!row || !row.image_key) throw new ApiError(404, "not_found", "图片不存在");
-    if (Date.parse(row.expires_at) <= Date.now()) throw new ApiError(410, "expired", "记录已过期");
+    if (!row || !row.image_key) throw new ApiError(404, "not_found", "Not found")
+    if (Date.parse(row.expires_at) <= Date.now()) throw new ApiError(410, "expired", "Record expired")
 
     const obj = await c.env.BUCKET.get(row.image_key);
-    if (!obj) throw new ApiError(404, "not_found", "图片对象不存在");
+    if (!obj) throw new ApiError(404, "not_found", "Not found")
 
     const headers = new Headers();
     obj.writeHttpMetadata(headers);
@@ -595,9 +684,9 @@ app.get("/v1/artifact/:id/image", requireAuth, async (c) => {
 
 app.post("/v1/cron/cleanup", async (c) => {
   try {
-    if (!c.env.CRON_SECRET) throw new ApiError(404, "not_found", "未启用");
+    if (!c.env.CRON_SECRET) throw new ApiError(404, "not_found", "Not found")
     const secret = c.req.header("X-Cron-Secret");
-    if (secret !== c.env.CRON_SECRET) throw new ApiError(403, "forbidden", "无权限");
+    if (secret !== c.env.CRON_SECRET) throw new ApiError(403, "forbidden", "Forbidden")
 
     const deleted = await cleanupExpired(c.env);
     return jsonOk(c, { ok: true, deleted });

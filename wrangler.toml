@@ -1,6 +1,9 @@
-name = "lab-api"
+﻿name = "lab-api"
 main = "apps/worker/src/index.ts"
 compatibility_date = "2025-12-18"
+
+compatibility_flags = ["nodejs_compat"]
+
 
 [vars]
 # Comma-separated allowlist. Example:

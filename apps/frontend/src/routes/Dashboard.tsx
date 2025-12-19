@@ -11,6 +11,7 @@ export default function DashboardPage() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showRedeem, setShowRedeem] = useState(false);
 
   const expList = useMemo(() => Object.values(experiments), []);
 
@@ -34,8 +35,13 @@ export default function DashboardPage() {
         <div className="row">
           {profile ? (
             <>
-              <span className="pill">学号：{profile.student_id}</span>
-              <span className="pill">余额：{profile.balance}</span>
+              <span className="pill">账号：{profile.student_id}</span>
+              <span className="pill" style={{ gap: 6 }}>
+                余额：{profile.balance}
+                <button className="icon-btn" onClick={() => setShowRedeem(true)} title="兑换码充值">
+                  +
+                </button>
+              </span>
             </>
           ) : (
             <span className="pill">未登录</span>
@@ -54,42 +60,6 @@ export default function DashboardPage() {
 
       <div className="grid cols-2">
         <div className="card">
-          <div style={{ fontWeight: 700 }}>兑换码充值</div>
-          <div className="muted" style={{ fontSize: 13, marginTop: 6 }}>
-            每次识别默认消耗 1 次；兑换码由爱发电发放
-          </div>
-          <div className="grid" style={{ marginTop: 12 }}>
-            <label>
-              兑换码
-              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="16~20 位" />
-            </label>
-            {error ? <div className="notice">{error}</div> : null}
-            <button
-              disabled={busy}
-              onClick={async () => {
-                if (!code.trim()) {
-                  setError("请输入兑换码");
-                  return;
-                }
-                setBusy(true);
-                try {
-                  const r = await redeem({ code: code.trim() });
-                  setCode("");
-                  setProfile((p) => (p ? { ...p, balance: r.balance } : p));
-                } catch (e) {
-                  if (e instanceof ApiError) setError(`${e.message}（${e.code}）`);
-                  else setError("兑换失败");
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              {busy ? "处理中…" : "兑换"}
-            </button>
-          </div>
-        </div>
-
-        <div className="card">
           <div style={{ fontWeight: 700 }}>开始一个实验</div>
           <div className="muted" style={{ fontSize: 13, marginTop: 6 }}>
             上传表格照片 → 抽取 → 校对 → 一键生成固定样式图
@@ -105,10 +75,8 @@ export default function DashboardPage() {
             ))}
           </div>
         </div>
-      </div>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="row" style={{ justifyContent: "space-between" }}>
+        <div className="card">
           <div style={{ fontWeight: 700 }}>最近 3 天历史</div>
           <button
             onClick={async () => {
@@ -118,39 +86,91 @@ export default function DashboardPage() {
           >
             刷新
           </button>
-        </div>
 
-        {items.length === 0 ? (
-          <div className="notice" style={{ marginTop: 12 }}>
-            暂无历史
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto", marginTop: 12 }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th>实验</th>
-                  <th>过期</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((it) => (
-                  <tr key={it.id}>
-                    <td>{new Date(it.created_at).toLocaleString()}</td>
-                    <td>{it.exp_id}</td>
-                    <td>{new Date(it.expires_at).toLocaleString()}</td>
-                    <td>
-                      <Link to={`/exp/${it.exp_id}?artifact=${encodeURIComponent(it.id)}`}>打开</Link>
-                    </td>
+          {items.length === 0 ? (
+            <div className="notice" style={{ marginTop: 12 }}>
+              暂无历史
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto", marginTop: 12 }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>实验</th>
+                    <th>过期</th>
+                    <th></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody>
+                  {items.map((it) => (
+                    <tr key={it.id}>
+                      <td>{new Date(it.created_at).toLocaleString()}</td>
+                      <td>{it.exp_id}</td>
+                      <td>{new Date(it.expires_at).toLocaleString()}</td>
+                      <td>
+                        <Link to={`/exp/${it.exp_id}?artifact=${encodeURIComponent(it.id)}`}>打开</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
+
+      {showRedeem ? (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div style={{ fontWeight: 700 }}>兑换码充值</div>
+            <div className="muted" style={{ fontSize: 13, marginTop: 6 }}>
+              兑换码由爱发电发放，每次识别默认消耗 1 次。
+            </div>
+            <div className="grid" style={{ marginTop: 12 }}>
+              <label>
+                兑换码
+                <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="16~20 位" />
+              </label>
+              {error ? <div className="notice">{error}</div> : null}
+              <div className="row" style={{ justifyContent: "flex-end" }}>
+                <button
+                  onClick={() => {
+                    setShowRedeem(false);
+                    setError(null);
+                  }}
+                >
+                  取消
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={async () => {
+                    if (!code.trim()) {
+                      setError("请输入兑换码");
+                      return;
+                    }
+                    setBusy(true);
+                    try {
+                      const r = await redeem({ code: code.trim() });
+                      setCode("");
+                      setProfile((p) => (p ? { ...p, balance: r.balance } : p));
+                      setShowRedeem(false);
+                      setError(null);
+                    } catch (e) {
+                      if (e instanceof ApiError) setError(`${e.message}（${e.code}）`);
+                      else setError("兑换失败");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  {busy ? "处理中…" : "兑换"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
